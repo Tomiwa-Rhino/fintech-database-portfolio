@@ -1,0 +1,75 @@
+erDiagram
+    KYC_TIER ||--o{ CUSTOMER : "sets limits for"
+    STATE ||--o{ CUSTOMER : "located in"
+    STATE ||--o{ AGENT : "located in"
+    CUSTOMER ||--o| WALLET : owns
+    AGENT ||--o| WALLET : owns
+    WALLET ||--o{ LEDGER_ENTRY : "debited / credited by"
+    TXN ||--|{ LEDGER_ENTRY : "posted as"
+    WALLET ||--o{ TXN : initiates
+    AGENT ||--o{ TXN : "handles cash for"
+    TXN |o--o| TXN : reverses
+    TXN ||--o| BILL_PAYMENT : "details of"
+    BILLER ||--o{ BILL_PAYMENT : receives
+    TXN ||--o{ FRAUD_FLAG : "flagged by"
+    ADMIN_USER ||--o{ FRAUD_FLAG : reviews
+
+    KYC_TIER { smallint tier PK
+        numeric single_txn_limit
+        numeric daily_limit
+        numeric max_balance }
+    STATE { char state_code PK
+        varchar name UK }
+    CUSTOMER { int customer_id PK
+        varchar phone UK
+        varchar first_name
+        varchar last_name
+        date date_of_birth
+        char bvn_hash UK
+        smallint kyc_tier FK
+        char state_code FK
+        varchar status }
+    AGENT { int agent_id PK
+        varchar business_name
+        varchar phone UK
+        char state_code FK
+        varchar lga
+        numeric commission_pct
+        varchar status }
+    ADMIN_USER { smallint admin_id PK
+        varchar email UK
+        varchar role }
+    WALLET { bigint wallet_id PK
+        varchar owner_type
+        int customer_id FK
+        int agent_id FK
+        varchar system_name UK
+        numeric balance
+        varchar status }
+    TXN { bigint txn_id PK
+        varchar reference UK
+        varchar txn_type
+        numeric amount
+        numeric fee
+        varchar status
+        bigint initiated_by_wallet FK
+        int agent_id FK
+        bigint reverses_txn FK
+        timestamptz created_at }
+    LEDGER_ENTRY { bigint entry_id PK
+        bigint txn_id FK
+        bigint wallet_id FK
+        char direction
+        numeric amount }
+    BILLER { smallint biller_id PK
+        varchar name UK
+        varchar category }
+    BILL_PAYMENT { bigint txn_id PK
+        smallint biller_id FK
+        varchar customer_ref }
+    FRAUD_FLAG { bigint flag_id PK
+        bigint txn_id FK
+        varchar rule_code
+        smallint score
+        smallint reviewed_by FK
+        varchar outcome }
