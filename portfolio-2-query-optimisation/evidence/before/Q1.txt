@@ -1,0 +1,43 @@
+-- Q1 Wallet statement for the last 30 days (customer looks at their app)
+-- median of 5: 74.394 ms
+
+SELECT le.posted_at, t.reference, t.txn_type, le.direction, le.amount, t.narration
+FROM wallet.customer c
+JOIN wallet.wallet w        ON w.customer_id = c.customer_id
+JOIN wallet.ledger_entry le ON le.wallet_id = w.wallet_id
+JOIN wallet.txn t           ON t.txn_id = le.txn_id
+WHERE c.phone = '+2348000018267'
+  AND le.posted_at >= TIMESTAMPTZ '2026-09-01' AND le.posted_at < TIMESTAMPTZ '2026-10-01'
+ORDER BY le.posted_at DESC;
+
+Sort  (cost=18348.57..18348.57 rows=1 width=51) (actual time=90.628..90.635 rows=5 loops=1)
+  Sort Key: le.posted_at DESC
+  Sort Method: quicksort  Memory: 25kB
+  Buffers: shared hit=6488 read=286
+  ->  Nested Loop  (cost=17.05..18348.56 rows=1 width=51) (actual time=25.627..90.616 rows=5 loops=1)
+        Buffers: shared hit=6488 read=286
+        ->  Hash Join  (cost=16.63..18347.42 rows=1 width=24) (actual time=25.610..90.555 rows=5 loops=1)
+              Hash Cond: (le.wallet_id = w.wallet_id)
+              Buffers: shared hit=6468 read=286
+              ->  Seq Scan on ledger_entry le  (cost=0.00..18204.58 rows=33652 width=32) (actual time=7.132..86.996 rows=34568 loops=1)
+                    Filter: ((posted_at >= '2026-09-01 00:00:00+00'::timestamp with time zone) AND (posted_at < '2026-10-01 00:00:00+00'::timestamp with time zone))
+                    Rows Removed by Filter: 729204
+                    Buffers: shared hit=6462 read=286
+              ->  Hash  (cost=16.62..16.62 rows=1 width=8) (actual time=0.050..0.053 rows=1 loops=1)
+                    Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                    Buffers: shared hit=6
+                    ->  Nested Loop  (cost=0.57..16.62 rows=1 width=8) (actual time=0.045..0.048 rows=1 loops=1)
+                          Buffers: shared hit=6
+                          ->  Index Scan using customer_phone_key on customer c  (cost=0.29..8.30 rows=1 width=4) (actual time=0.033..0.033 rows=1 loops=1)
+                                Index Cond: ((phone)::text = '+2348000018267'::text)
+                                Buffers: shared hit=3
+                          ->  Index Scan using one_wallet_per_customer on wallet w  (cost=0.29..8.30 rows=1 width=12) (actual time=0.009..0.010 rows=1 loops=1)
+                                Index Cond: (customer_id = c.customer_id)
+                                Buffers: shared hit=3
+        ->  Index Scan using txn_pkey on txn t  (cost=0.42..1.14 rows=1 width=43) (actual time=0.008..0.008 rows=1 loops=5)
+              Index Cond: (txn_id = le.txn_id)
+              Buffers: shared hit=20
+Planning:
+  Buffers: shared hit=29
+Planning Time: 0.557 ms
+Execution Time: 90.685 ms

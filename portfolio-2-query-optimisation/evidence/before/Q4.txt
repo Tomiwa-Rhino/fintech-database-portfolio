@@ -1,0 +1,22 @@
+-- Q4 Agent end-of-day report: cash-in and cash-out totals for one agent on one day
+-- median of 5: 26.180 ms
+
+SELECT txn_type, count(*) AS n, sum(amount) AS total, sum(fee) AS fees
+FROM wallet.txn
+WHERE agent_id = 264 AND status = 'SUCCESS'
+  AND created_at >= TIMESTAMPTZ '2026-06-17' AND created_at < TIMESTAMPTZ '2026-06-18'
+GROUP BY txn_type;
+
+GroupAggregate  (cost=11119.07..11119.10 rows=1 width=80) (actual time=25.833..25.834 rows=1 loops=1)
+  Group Key: txn_type
+  Buffers: shared hit=5041
+  ->  Sort  (cost=11119.07..11119.08 rows=1 width=18) (actual time=25.818..25.819 rows=5 loops=1)
+        Sort Key: txn_type
+        Sort Method: quicksort  Memory: 25kB
+        Buffers: shared hit=5041
+        ->  Seq Scan on txn  (cost=0.00..11119.06 rows=1 width=18) (actual time=20.249..25.808 rows=5 loops=1)
+              Filter: ((created_at >= '2026-06-17 00:00:00+00'::timestamp with time zone) AND (created_at < '2026-06-18 00:00:00+00'::timestamp with time zone) AND (agent_id = 264) AND ((status)::text = 'SUCCESS'::text))
+              Rows Removed by Filter: 303898
+              Buffers: shared hit=5041
+Planning Time: 0.095 ms
+Execution Time: 25.859 ms

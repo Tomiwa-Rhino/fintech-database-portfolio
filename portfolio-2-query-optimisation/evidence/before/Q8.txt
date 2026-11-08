@@ -1,0 +1,57 @@
+-- Q8 Management: top 10 agents by cash-out value in Q3 2026 (CTE + window function)
+-- median of 5: 28.113 ms
+
+WITH agent_totals AS (
+    SELECT t.agent_id, sum(t.amount) AS cash_out_value, count(*) AS n
+    FROM wallet.txn t
+    WHERE t.txn_type = 'CASH_OUT' AND t.status = 'SUCCESS'
+      AND t.created_at >= TIMESTAMPTZ '2026-07-01' AND t.created_at < TIMESTAMPTZ '2026-10-01'
+    GROUP BY t.agent_id
+)
+SELECT a.business_name, s.name AS state, at.cash_out_value, at.n,
+       rank() OVER (ORDER BY at.cash_out_value DESC) AS rnk
+FROM agent_totals at JOIN wallet.agent a USING (agent_id) JOIN wallet.state s USING (state_code)
+ORDER BY rnk LIMIT 10;
+
+Limit  (cost=11236.22..11236.25 rows=10 width=69) (actual time=27.884..27.890 rows=10 loops=1)
+  Buffers: shared hit=5067
+  ->  Sort  (cost=11236.22..11237.47 rows=500 width=69) (actual time=27.883..27.887 rows=10 loops=1)
+        Sort Key: (rank() OVER (?))
+        Sort Method: top-N heapsort  Memory: 25kB
+        Buffers: shared hit=5067
+        ->  WindowAgg  (cost=11216.67..11225.42 rows=500 width=69) (actual time=27.563..27.790 rows=500 loops=1)
+              Buffers: shared hit=5067
+              ->  Sort  (cost=11216.67..11217.92 rows=500 width=61) (actual time=27.557..27.585 rows=500 loops=1)
+                    Sort Key: (sum(t.amount)) DESC
+                    Sort Method: quicksort  Memory: 56kB
+                    Buffers: shared hit=5067
+                    ->  Nested Loop  (cost=11168.04..11194.25 rows=500 width=61) (actual time=26.980..27.386 rows=500 loops=1)
+                          Buffers: shared hit=5067
+                          ->  Hash Join  (cost=11167.89..11180.47 rows=500 width=58) (actual time=26.958..27.192 rows=500 loops=1)
+                                Hash Cond: (t.agent_id = a.agent_id)
+                                Buffers: shared hit=5047
+                                ->  HashAggregate  (cost=11150.64..11156.89 rows=500 width=44) (actual time=26.799..26.930 rows=500 loops=1)
+                                      Group Key: t.agent_id
+                                      Batches: 1  Memory Usage: 297kB
+                                      Buffers: shared hit=5041
+                                      ->  Seq Scan on txn t  (cost=0.00..11119.06 rows=4211 width=10) (actual time=20.150..25.974 rows=4167 loops=1)
+                                            Filter: ((created_at >= '2026-07-01 00:00:00+00'::timestamp with time zone) AND (created_at < '2026-10-01 00:00:00+00'::timestamp with time zone) AND ((txn_type)::text = 'CASH_OUT'::text) AND ((status)::text = 'SUCCESS'::text))
+                                            Rows Removed by Filter: 299736
+                                            Buffers: shared hit=5041
+                                ->  Hash  (cost=11.00..11.00 rows=500 width=22) (actual time=0.153..0.155 rows=500 loops=1)
+                                      Buckets: 1024  Batches: 1  Memory Usage: 35kB
+                                      Buffers: shared hit=6
+                                      ->  Seq Scan on agent a  (cost=0.00..11.00 rows=500 width=22) (actual time=0.005..0.081 rows=500 loops=1)
+                                            Buffers: shared hit=6
+                          ->  Memoize  (cost=0.15..0.19 rows=1 width=9) (actual time=0.000..0.000 rows=1 loops=500)
+                                Cache Key: a.state_code
+                                Cache Mode: logical
+                                Hits: 490  Misses: 10  Evictions: 0  Overflows: 0  Memory Usage: 2kB
+                                Buffers: shared hit=20
+                                ->  Index Scan using state_pkey on state s  (cost=0.14..0.18 rows=1 width=9) (actual time=0.002..0.002 rows=1 loops=10)
+                                      Index Cond: (state_code = a.state_code)
+                                      Buffers: shared hit=20
+Planning:
+  Buffers: shared hit=4
+Planning Time: 0.279 ms
+Execution Time: 27.936 ms

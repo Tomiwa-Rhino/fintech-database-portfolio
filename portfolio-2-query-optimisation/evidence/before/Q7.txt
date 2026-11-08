@@ -1,0 +1,22 @@
+-- Q7 Finance: monthly fee revenue (credits to the FEES system wallet) in 2026
+-- median of 5: 100.823 ms
+
+SELECT date_trunc('month', le.posted_at) AS month, sum(le.amount) AS fee_revenue, count(*) AS fee_postings
+FROM wallet.ledger_entry le
+WHERE le.wallet_id = 2 AND le.direction = 'CR'
+  AND le.posted_at >= TIMESTAMPTZ '2026-01-01' AND le.posted_at < TIMESTAMPTZ '2027-01-01'
+GROUP BY 1 ORDER BY 1;
+
+GroupAggregate  (cost=25673.89..26777.39 rows=43107 width=48) (actual time=86.482..100.573 rows=10 loops=1)
+  Group Key: (date_trunc('month'::text, posted_at))
+  Buffers: shared hit=6748, temp read=216 written=217
+  ->  Sort  (cost=25673.89..25788.11 rows=45689 width=13) (actual time=84.892..90.853 rows=76331 loops=1)
+        Sort Key: (date_trunc('month'::text, posted_at))
+        Sort Method: external merge  Disk: 1728kB
+        Buffers: shared hit=6748, temp read=216 written=217
+        ->  Seq Scan on ledger_entry le  (cost=0.00..22137.66 rows=45689 width=13) (actual time=48.356..73.513 rows=76331 loops=1)
+              Filter: ((posted_at >= '2026-01-01 00:00:00+00'::timestamp with time zone) AND (posted_at < '2027-01-01 00:00:00+00'::timestamp with time zone) AND (wallet_id = 2) AND (direction = 'CR'::bpchar))
+              Rows Removed by Filter: 687441
+              Buffers: shared hit=6748
+Planning Time: 0.136 ms
+Execution Time: 100.823 ms

@@ -1,0 +1,16 @@
+-- Q3 Fraud velocity rule: transfers started by a wallet in the last hour
+-- median of 5: 25.764 ms
+
+SELECT count(*) AS transfers_last_hour
+FROM wallet.txn
+WHERE initiated_by_wallet = 17034 AND txn_type = 'TRANSFER'
+  AND created_at >= TIMESTAMPTZ '2026-08-15 18:00' AND created_at < TIMESTAMPTZ '2026-08-15 19:00';
+
+Aggregate  (cost=11119.06..11119.07 rows=1 width=8) (actual time=25.443..25.444 rows=1 loops=1)
+  Buffers: shared hit=5041
+  ->  Seq Scan on txn  (cost=0.00..11119.06 rows=1 width=0) (actual time=22.311..25.436 rows=1 loops=1)
+        Filter: ((created_at >= '2026-08-15 18:00:00+00'::timestamp with time zone) AND (created_at < '2026-08-15 19:00:00+00'::timestamp with time zone) AND (initiated_by_wallet = 17034) AND ((txn_type)::text = 'TRANSFER'::text))
+        Rows Removed by Filter: 303902
+        Buffers: shared hit=5041
+Planning Time: 0.082 ms
+Execution Time: 25.465 ms

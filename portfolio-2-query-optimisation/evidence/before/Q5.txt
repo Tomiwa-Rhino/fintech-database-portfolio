@@ -1,0 +1,28 @@
+-- Q5 Compliance queue: fraud flags still waiting for review, oldest first
+-- median of 5: 0.978 ms
+
+SELECT f.flag_id, f.rule_code, f.score, t.reference, t.amount, f.created_at
+FROM wallet.fraud_flag f JOIN wallet.txn t USING (txn_id)
+WHERE f.reviewed_by IS NULL
+ORDER BY f.created_at
+LIMIT 50;
+
+Limit  (cost=2703.42..2703.55 rows=50 width=51) (actual time=0.810..0.817 rows=50 loops=1)
+  Buffers: shared hit=1409
+  ->  Sort  (cost=2703.42..2704.29 rows=348 width=51) (actual time=0.810..0.812 rows=50 loops=1)
+        Sort Key: f.created_at
+        Sort Method: top-N heapsort  Memory: 33kB
+        Buffers: shared hit=1409
+        ->  Nested Loop  (cost=0.42..2691.86 rows=348 width=51) (actual time=0.007..0.721 rows=348 loops=1)
+              Buffers: shared hit=1409
+              ->  Seq Scan on fraud_flag f  (cost=0.00..34.74 rows=348 width=37) (actual time=0.003..0.113 rows=348 loops=1)
+                    Filter: (reviewed_by IS NULL)
+                    Rows Removed by Filter: 1426
+                    Buffers: shared hit=17
+              ->  Index Scan using txn_pkey on txn t  (cost=0.42..7.64 rows=1 width=30) (actual time=0.001..0.001 rows=1 loops=348)
+                    Index Cond: (txn_id = f.txn_id)
+                    Buffers: shared hit=1392
+Planning:
+  Buffers: shared hit=8
+Planning Time: 0.085 ms
+Execution Time: 0.831 ms
