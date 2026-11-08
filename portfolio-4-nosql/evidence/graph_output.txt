@@ -1,0 +1,123 @@
+
+================================================================================================
+1. Inject a fraud scenario through transfer_funds() (PostgreSQL stays the system of record)
+================================================================================================
+victim=30619  mules=[30620, 30621, 30622, 30623, 30624]  collector=30625  agent_wallet=30003  ring=[30626, 30627, 30628]
+collector confirmed as fraud by compliance (fraud_flag CONFIRMED)
+
+================================================================================================
+2. Export from PostgreSQL and load into the graph
+================================================================================================
+loaded 30,537 Wallet nodes and 137,325 SENT edges in 0.25s
+
+================================================================================================
+3. Graph queries
+================================================================================================
+
+--- G0. Naive 'guilt by association': every wallet within 3 hops of an older confirmed fraud wallet (6520), any direction, any time
+MATCH (f:Wallet {id: $f})-[:SENT*1..3]-(w:Wallet)
+       WHERE w.id <> f.id
+       RETURN count(DISTINCT w) AS wallets_reached
+  wallets_reached
+  667
+  -> 1 rows in 18.1 ms
+
+--- G1. Follow the money: where did the victim's funds go? (forward only, >= N10,000, after the theft, <= 3 hops)
+MATCH (v:Wallet {id: $victim})-[e:SENT*1..3 (r, n | WHERE r.amount >= 10000 AND r.at >= $since)]->(w:Wallet)
+       RETURN DISTINCT w.id AS wallet, w.owner_type AS type, min(length(e)) AS hops ORDER BY hops, wallet
+  wallet | type | hops
+  30620 | CUSTOMER | 1
+  30621 | CUSTOMER | 1
+  30622 | CUSTOMER | 1
+  30623 | CUSTOMER | 1
+  30624 | CUSTOMER | 1
+  30625 | CUSTOMER | 2
+  30003 | AGENT | 3
+  -> 7 rows in 15.2 ms
+
+--- G2. Fan-in 'collector' pattern: wallets receiving from >= 4 different senders within one hour
+MATCH (s:Wallet)-[r:SENT]->(c:Wallet)
+       WITH c, date_trunc('hour', r.at) AS hr, collect(DISTINCT s.id) AS senders
+       WHERE size(senders) >= 4
+       RETURN c.id AS collector, hr, size(senders) AS n_senders, senders ORDER BY n_senders DESC
+  collector | hr | n_senders | senders
+  30625 | 2026-11-08 19:00:00 | 5 | [30622, 30621, 30620, 30623, 30624]
+  -> 1 rows in 160.8 ms
+
+--- G3. How did money get from the victim to the agent? (all paths up to 3 hops)
+MATCH p = (v:Wallet {id: $victim})-[:SENT*1..3]->(a:Wallet {id: $agent})
+       RETURN properties(nodes(p), 'id') AS path LIMIT 10
+  path
+  [30619, 30624, 30625, 30003]
+  [30619, 30623, 30625, 30003]
+  [30619, 30622, 30625, 30003]
+  [30619, 30621, 30625, 30003]
+  [30619, 30620, 30625, 30003]
+  -> 5 rows in 7.5 ms
+
+--- G4a. Round-trip cycles A -> B -> C -> A, any timing (random everyday transfers also form cycles)
+MATCH (a:Wallet)-[:SENT]->(b:Wallet)-[:SENT]->(c:Wallet)-[:SENT]->(a)
+       WHERE a.id < b.id AND a.id < c.id
+       RETURN count(*) AS cycles
+  cycles
+  35
+  -> 1 rows in 126.7 ms
+
+--- G4b. Suspicious cycles: money returns to the start in time order within 24 hours (layering)
+MATCH (a:Wallet)-[r1:SENT]->(b:Wallet)-[r2:SENT]->(c:Wallet)-[r3:SENT]->(a)
+       WHERE r1.at <= r2.at AND r2.at <= r3.at AND r3.at - r1.at <= interval('24 hours')
+       RETURN a.id, b.id, c.id, r1.amount, r2.amount, r3.amount
+  a.id | b.id | c.id | r1.amount | r2.amount | r3.amount
+  30627 | 30628 | 30626 | 49000.0 | 48000.0 | 50000.0
+  30628 | 30626 | 30627 | 48000.0 | 50000.0 | 49000.0
+  30626 | 30627 | 30628 | 50000.0 | 49000.0 | 48000.0
+  -> 3 rows in 199.4 ms
+
+--- G5. Busiest hubs: wallets with the most distinct counterparties
+MATCH (w:Wallet)-[:SENT]-(x:Wallet)
+       RETURN w.id AS wallet, w.owner_type AS type, count(DISTINCT x) AS counterparties
+       ORDER BY counterparties DESC LIMIT 5
+  wallet | type | counterparties
+  20903 | CUSTOMER | 24
+  5746 | CUSTOMER | 24
+  6175 | CUSTOMER | 23
+  16839 | CUSTOMER | 23
+  4064 | CUSTOMER | 23
+  -> 5 rows in 84.6 ms
+
+================================================================================================
+4. Same question as G1 in SQL (recursive CTE over the relational ledger)
+================================================================================================
+WITH RECURSIVE hop(w, depth) AS (
+    SELECT %(victim)s::bigint, 0
+    UNION
+    SELECT cr.wallet_id, hop.depth + 1
+    FROM hop
+    JOIN ledger_entry dr ON dr.wallet_id = hop.w AND dr.direction = 'DR'
+    JOIN txn t           ON t.txn_id = dr.txn_id AND t.txn_type = 'TRANSFER'
+                        AND t.status IN ('SUCCESS','REVERSED') AND t.amount >= 10000 AND t.created_at >= %(since)s
+    JOIN ledger_entry cr ON cr.txn_id = t.txn_id AND cr.direction = 'CR' AND cr.wallet_id > 2
+    WHERE hop.depth < 3
+)
+SELECT w, min(depth) FROM hop WHERE w <> %(victim)s GROUP BY w ORDER BY 2, 1
+  -> 7 rows in 1.4 ms
+
+Same answer as G1: True.  Graph 15.2 ms vs SQL 1.4 ms
+Query size: Cypher G1 = 3 lines; SQL = 12 lines (recursive CTE + 3 joins per hop)
+
+================================================================================================
+5. Same question as G0 in SQL (unfiltered 3-hop neighbourhood, both directions)
+================================================================================================
+WITH RECURSIVE pairs AS (
+    SELECT DISTINCT dr.wallet_id a, cr.wallet_id b
+    FROM txn t JOIN ledger_entry dr ON dr.txn_id=t.txn_id AND dr.direction='DR'
+               JOIN ledger_entry cr ON cr.txn_id=t.txn_id AND cr.direction='CR'
+    WHERE t.txn_type='TRANSFER' AND t.status IN ('SUCCESS','REVERSED') AND dr.wallet_id>2 AND cr.wallet_id>2
+), und AS (SELECT a, b FROM pairs UNION SELECT b, a FROM pairs),
+walk(w, depth) AS (
+    SELECT %(c)s::bigint, 0
+    UNION
+    SELECT und.b, walk.depth + 1 FROM walk JOIN und ON und.a = walk.w WHERE walk.depth < 3
+)
+SELECT count(DISTINCT w) - 1 FROM walk
+  -> 667 wallets reached in 585 ms   vs graph G0 18 ms  (32x faster in the graph)
