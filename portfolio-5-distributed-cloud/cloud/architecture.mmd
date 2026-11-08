@@ -1,0 +1,33 @@
+flowchart LR
+    subgraph Clients
+        APP[Customer mobile app]
+        POS[Agent POS app]
+        ADM[Admin / compliance portal]
+    end
+    APP --> API
+    POS --> API
+    ADM --> API
+    API[API servers<br/>transfer_funds via PostgreSQL]
+
+    subgraph LAG1["Lagos data centre 1"]
+        P[(PostgreSQL PRIMARY<br/>lagos1)]
+        RD[(Read replica<br/>reports, statements)]
+    end
+    subgraph LAG2["Lagos data centre 2"]
+        S[(SYNC standby<br/>lagos2 · RPO = 0)]
+    end
+    subgraph ABJ["Abuja DR site"]
+        A[(ASYNC standby<br/>abuja · disaster copy)]
+        B[(Encrypted backups +<br/>WAL archive, 35-day PITR)]
+    end
+    G[(Fraud graph<br/>nightly / CDC load)]
+
+    API -- writes --> P
+    API -- reads --> RD
+    P == synchronous WAL ==> S
+    P -. asynchronous WAL .-> A
+    P -. async .-> RD
+    RD -. export .-> G
+    P -. base backups + WAL .-> B
+    HA{{Failover manager<br/>e.g. Patroni + etcd}} --- P
+    HA --- S
