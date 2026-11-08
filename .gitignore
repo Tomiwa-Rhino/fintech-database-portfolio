@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 .env
 *.csv
+graph_db*
+graph_data/
