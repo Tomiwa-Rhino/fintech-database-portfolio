@@ -1,0 +1,67 @@
+PostgreSQL 16.15 (Ubuntu 16.15-0ubuntu0.24.04.1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, 64-bit
+
+====================================================================================================
+C1. DOUBLE-SPEND: customer has ₦10,000 and taps 'send ₦8,000' on two phones at the same moment (+₦10 fee each)
+====================================================================================================
+  --- Naive app logic: read balance, check in the app, write new balance
+  [  0.03s] phone_1   reads balance ₦10,000; check 10,000 >= 8,010 -> OK
+  [  0.03s] phone_2   reads balance ₦10,000; check 10,000 >= 8,010 -> OK
+  [  0.03s] phone_2   writes balance = 10,000 - 8,010 = ₦1,990; COMMIT, transfer approved
+  [  0.03s] phone_1   writes balance = 10,000 - 8,010 = ₦1,990; COMMIT, transfer approved
+  [  0.04s] result    2 transfers approved = ₦16,020 sent, but balance is ₦1,990 -> ₦8,010 was CREATED out of nothing (lost update). The no-overdraft CHECK did not help: ₦1,990 >= 0.
+
+  --- Option C (TapNaira's choice): UPDATE wallet SET balance = balance - 8010 WHERE wallet_id = ? AND balance >= 8010
+  [  0.07s] phone_2   rows updated = 1 after 0.002s -> APPROVED
+  [  0.07s] phone_1   rows updated = 0 after 0.002s -> REJECTED: insufficient funds
+  [  0.08s] result    balance ₦1,990 -> correct. The second UPDATE waited for the row lock, re-checked balance >= 8010 against the NEW value (1,990) and matched 0 rows.
+
+  --- Option A (comparison): SELECT ... FOR UPDATE, then check, then UPDATE
+  [  0.09s] phone_1   got lock after 0.00s, balance ₦10,000
+  [  0.60s] phone_1   APPROVED
+  [  0.60s] phone_2   got lock after 0.50s, balance ₦1,990
+  [  0.60s] phone_2   REJECTED: insufficient funds
+  [  0.61s] result    balance ₦1,990 -> correct, but phone_2 had to WAIT for the whole of phone_1's transaction.
+
+  --- Option B (comparison): naive logic but under SERIALIZABLE, with automatic retry
+  [  0.63s] phone_2   attempt 1: APPROVED
+  [  0.64s] phone_1   attempt 1: ERROR 40001 serialization failure -> retry
+  [  0.64s] phone_1   attempt 2: balance ₦1,990 -> REJECTED
+  [  0.65s] result    balance ₦1,990 -> correct, but the app needs retry code and wastes one attempt.
+
+====================================================================================================
+C2. STRESS TEST: 20 simultaneous ₦1,000 transfers (+₦10 fee) via transfer_funds() from a ₦10,000 wallet
+====================================================================================================
+  [  0.96s] result    approved 9, rejected 11 (expected 9 and 11: 9 × ₦1,010 = ₦9,090 ≤ ₦10,000)
+  [  0.99s] result    sender balance ₦910.00 (expected ₦910.00) · ledger says ₦910.00 · receiver ₦9,000.00 (expected ₦9,000.00) -> balance and ledger agree
+
+====================================================================================================
+C3. DEADLOCK: A sends to B while B sends to A at the same moment
+====================================================================================================
+  --- Naive order: each transfer locks its OWN (sender) wallet first
+  [  1.04s] B->A      locked sender wallet 30561
+  [  1.04s] A->B      locked sender wallet 30560
+  [  1.54s] A->B      ERROR 40P01 deadlock detected -> this transfer was cancelled (victim)
+  [  1.54s] B->A      COMMIT
+
+  --- transfer_funds(): both wallets locked in wallet_id order (lowest first)
+  [  1.57s] B->A      COMMIT (no deadlock)
+  [  1.62s] A->B      COMMIT (no deadlock)
+
+====================================================================================================
+C4. READ SKEW: finance totals wallets A + B while A sends ₦5,000 to B (READ COMMITTED)
+====================================================================================================
+  [  1.68s] finance   reads A = ₦20,000
+  [  1.69s] customer  A -> B ₦5,000 COMMIT
+  [  1.69s] finance   reads B = ₦25,000  -> report total ₦45,000
+  [  1.69s] result    true total before = ₦40,000; report shows ₦45,000 -> ANOMALY: ₦5,000 counted twice (money that doesn't exist)
+
+====================================================================================================
+C4. READ SKEW: finance totals wallets A + B while A sends ₦5,000 to B (REPEATABLE READ)
+====================================================================================================
+  [  1.72s] finance   reads A = ₦15,000
+  [  1.73s] customer  A -> B ₦5,000 COMMIT
+  [  1.73s] finance   reads B = ₦25,000  -> report total ₦40,000
+  [  1.73s] result    true total before = ₦40,000; report shows ₦40,000 -> CONSISTENT snapshot
+
+Reconciliation repair: 16 demo wallet(s) reset to their ledger balance (the C1 naive/option-A/B demos changed balances without ledger legs).
+All scenarios complete.

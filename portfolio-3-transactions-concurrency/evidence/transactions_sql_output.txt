@@ -1,0 +1,74 @@
+SET
+CREATE PROCEDURE
+================ Setup: give wallet A (id 101) and B (id 102) a known state ================
+SELECT 1
+ wallet_id |  balance  | status 
+-----------+-----------+--------
+       101 | 115130.00 | ACTIVE
+       102 | 132625.00 | ACTIVE
+(2 rows)
+
+UPDATE 2
+================ T1. COMMIT: transfer 2,000 (+10 fee) from A to B ================
+CALL
+ wallet_id |  balance  
+-----------+-----------
+       101 | 113120.00
+       102 | 134625.00
+(2 rows)
+
+     reference      | status  | wallet_id | direction | amount  
+--------------------+---------+-----------+-----------+---------
+ DEMO-T1-1794165291 | SUCCESS |       101 | DR        | 2010.00
+ DEMO-T1-1794165291 | SUCCESS |         2 | CR        |   10.00
+ DEMO-T1-1794165291 | SUCCESS |       102 | CR        | 2000.00
+(3 rows)
+
+================ T2. ROLLBACK: transfer 500,000 when A holds far less -> nothing is written ================
+psql:transactions.sql:86: ERROR:  Insufficient funds or wallet not active (wallet 101)
+CONTEXT:  PL/pgSQL function transfer_funds(text,bigint,bigint,numeric,numeric) line 33 at RAISE
+ new_txn_rows_after_failure 
+----------------------------
+                          0
+(1 row)
+
+ wallet_id |  balance  
+-----------+-----------
+       101 | 113120.00
+       102 | 134625.00
+(2 rows)
+
+================ T3. Idempotency: the app retries T1 with the SAME reference after a timeout ================
+psql:transactions.sql:92: ERROR:  duplicate key value violates unique constraint "txn_reference_key"
+DETAIL:  Key (reference)=(DEMO-T1-1794165291) already exists.
+CONTEXT:  SQL statement "INSERT INTO txn(reference, txn_type, amount, fee, status, initiated_by_wallet, narration)
+    VALUES (p_ref, 'TRANSFER', p_amount, p_fee, 'PENDING', p_from, 'Transfer') RETURNING txn_id"
+PL/pgSQL function transfer_funds(text,bigint,bigint,numeric,numeric) line 25 at SQL statement
+ wallet_id |  balance  
+-----------+-----------
+       101 | 113120.00
+       102 | 134625.00
+(2 rows)
+
+================ T4. Frozen wallet: compliance freezes B, a transfer to B is rolled back ================
+BEGIN
+UPDATE 1
+SAVEPOINT
+psql:transactions.sql:99: ERROR:  Receiver wallet 102 not active
+CONTEXT:  PL/pgSQL function transfer_funds(text,bigint,bigint,numeric,numeric) line 39 at RAISE
+ROLLBACK
+ wallet_id | status |  balance  
+-----------+--------+-----------
+       101 | ACTIVE | 113120.00
+       102 | FROZEN | 134625.00
+(2 rows)
+
+ROLLBACK
+================ T5. Durability + reconciliation: new session, ledger = balance for A and B ================
+You are now connected to database "tapnaira" as user "postgres".
+ wallet_id |  balance  | ledger_balance | matches 
+-----------+-----------+----------------+---------
+       101 | 113120.00 |      113120.00 | t
+       102 | 134625.00 |      134625.00 | t
+(2 rows)
+
