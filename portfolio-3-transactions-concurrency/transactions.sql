@@ -17,7 +17,9 @@ SET search_path TO wallet;
 -- Wallets are always locked first, in wallet_id order, to avoid deadlocks (see C2, C3).
 -- ---------------------------------------------------------------------
 CREATE OR REPLACE PROCEDURE transfer_funds(p_ref TEXT, p_from BIGINT, p_to BIGINT, p_amount NUMERIC, p_fee NUMERIC DEFAULT 10)
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql
+SET search_path = wallet      -- pinned: callers with a different search_path (found in Portfolio 5) still resolve wallet tables
+AS $$
 DECLARE
     v_txn BIGINT; v_limit NUMERIC; v_sent NUMERIC; v_rows INT;
 BEGIN
