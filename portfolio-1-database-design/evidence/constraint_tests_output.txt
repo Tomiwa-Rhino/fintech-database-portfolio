@@ -1,0 +1,53 @@
+SET
+--- Test 1: unbalanced transaction (debit 5,000, credit 4,000) is rejected at COMMIT by the deferred trigger
+BEGIN
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+psql:constraint_tests.sql:13: ERROR:  Unbalanced ledger for txn 303904: debits 5000.00 <> credits 4000.00
+CONTEXT:  PL/pgSQL function check_txn_balanced() line 8 at RAISE
+--- Test 2: editing ledger history is forbidden (append-only trigger)
+psql:constraint_tests.sql:16: ERROR:  ledger_entry is append-only; post a REVERSAL instead
+CONTEXT:  PL/pgSQL function forbid_ledger_change() line 3 at RAISE
+--- Test 3: a customer wallet cannot go negative (CHECK no_overdraft)
+psql:constraint_tests.sql:19: ERROR:  new row for relation "wallet" violates check constraint "no_overdraft"
+DETAIL:  Failing row contains (3, CUSTOMER, 1, null, null, -1.00, NGN, ACTIVE).
+--- Test 4: a wallet with two owners (CHECK one_owner)
+psql:constraint_tests.sql:22: ERROR:  new row for relation "wallet" violates check constraint "one_owner"
+DETAIL:  Failing row contains (30503, CUSTOMER, 1, 1, null, 0.00, NGN, ACTIVE).
+--- Test 5: a retried request with the same reference cannot post twice (UNIQUE idempotency key)
+psql:constraint_tests.sql:26: ERROR:  duplicate key value violates unique constraint "txn_reference_key"
+DETAIL:  Key (reference)=(TN25010100000001) already exists.
+--- Test 6: the same transaction cannot be reversed twice (UNIQUE reverses_txn)
+psql:constraint_tests.sql:30: ERROR:  duplicate key value violates unique constraint "txn_reverses_txn_key"
+DETAIL:  Key (reverses_txn)=(294487) already exists.
+--- Test 7: tier-2 customer without BVN verification (multi-column CHECK)
+psql:constraint_tests.sql:33: ERROR:  new row for relation "customer" violates check constraint "customer_check"
+DETAIL:  Failing row contains (30001, +2348999999999, No, Bvn, 1990-01-01, null, 2, null, ACTIVE, 2026-11-08 13:56:48.250888+00).
+--- Test 8: under-18 customer (CHECK)
+psql:constraint_tests.sql:36: ERROR:  new row for relation "customer" violates check constraint "customer_date_of_birth_check"
+DETAIL:  Failing row contains (30002, +2348999999998, Too, Young, 2011-11-12, null, 1, null, ACTIVE, 2026-11-08 13:56:48.25162+00).
+--- Test 9: invalid Nigerian phone format (CHECK regex)
+psql:constraint_tests.sql:39: ERROR:  new row for relation "customer" violates check constraint "customer_phone_check"
+DETAIL:  Failing row contains (30003, 08012345678, Bad, Phone, 1990-01-01, null, 1, null, ACTIVE, 2026-11-08 13:56:48.252156+00).
+--- Test 10: a correct transfer of 2,000 + 10 fee (3 balanced legs) COMMITS - expected to SUCCEED
+BEGIN
+ txn_id | reference 
+--------+-----------
+ 303907 | TEST-OK-1
+(1 row)
+
+INSERT 0 1
+INSERT 0 3
+COMMIT
+ direction | wallet_id | amount  
+-----------+-----------+---------
+ DR        |         3 | 2010.00
+ CR        |         2 |   10.00
+ CR        |         4 | 2000.00
+(3 rows)
+
+ALTER TABLE
+DELETE 3
+DELETE 1
+ALTER TABLE

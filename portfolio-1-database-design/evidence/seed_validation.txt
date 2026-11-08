@@ -1,0 +1,30 @@
+
+--- Validation 1: every transaction balances (expect 0 rows)
+ txn_id | diff 
+--------+------
+(0 rows)
+
+--- Validation 2: the whole ledger sums to zero, and so do all balances
+ ledger_net | sum_of_balances 
+------------+-----------------
+       0.00 |            0.00
+(1 row)
+
+--- Validation 3: no customer/agent wallet is negative (expect 0)
+ count 
+-------
+     0
+(1 row)
+
+--- Row counts
+      t       | count  
+--------------+--------
+ agent        |    500
+ fraud_flag   |   1774
+ bill_payment |  38796
+ customer     |  30000
+ wallet       |  30502
+ txn          | 303903
+ ledger_entry | 763772
+(7 rows)
+
