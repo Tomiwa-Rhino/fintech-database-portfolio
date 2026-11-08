@@ -1,0 +1,97 @@
+
+==================================================================================
+R1. Primary lagos1 (:5460) + copy of the TapNaira database
+==================================================================================
+lagos1 primary started
+wallets: 30539, transactions: 303965
+slot lagos2
+slot abuja
+
+==================================================================================
+R2. Clone two standbys with pg_basebackup -R
+==================================================================================
+lagos2 standby started on :5461
+abuja standby started on :5462
+
+==================================================================================
+R3. Replication status on the primary: lagos2 = sync, abuja = async
+==================================================================================
+ application_name |   state   | sync_state | replay_lsn 
+------------------+-----------+------------+------------
+ abuja            | streaming | async      | 0/10000000
+ lagos2           | streaming | sync       | 0/10000000
+(2 rows)
+
+
+==================================================================================
+R4. A transfer committed on the primary is visible on both standbys
+==================================================================================
+:5460 lab transfers = 1
+:5461 lab transfers = 1
+:5462 lab transfers = 1
+
+==================================================================================
+R5. Standbys are read-only (a transfer on lagos2 is rejected)
+==================================================================================
+ERROR:  cannot execute SELECT FOR UPDATE in a read-only transaction
+
+==================================================================================
+R6. Commit latency: 200 transfers, async-only vs sync to lagos2
+==================================================================================
+async only     : 371 ms
+sync to lagos2 : 451 ms   (same machine; real sites add network round-trip per commit)
+
+==================================================================================
+R7. Abuja link cut (abuja stopped): transfers CONTINUE because only lagos2 is synchronous
+==================================================================================
+abuja DOWN (simulated network partition)
+50 transfers committed in 118 ms with abuja down
+ application_name | sync_state 
+------------------+------------
+ lagos2           | sync
+(1 row)
+
+
+==================================================================================
+R8. Lagos2 ALSO down: no synchronous standby left -> commits BLOCK (consistency over availability)
+==================================================================================
+lagos2 DOWN
+   after 3 s the transfer is still waiting: wait_event=SyncRep
+   client saw: WARNING:  canceling wait for synchronous replication due to user request
+   client saw: DETAIL:  The transaction has already committed locally, but might not have been replicated to the standby.
+   client saw: CALL
+-- the customer is NOT told 'success' until a second Lagos copy exists; ops would page the on-call engineer
+lagos2 back up
+ application_name | sync_state 
+------------------+------------
+ lagos2           | sync
+(1 row)
+
+
+==================================================================================
+R9. DISASTER: lagos1 primary crashes. Compare the two standbys
+==================================================================================
+lab transfers on lagos1 before crash: 452
+lagos1 CRASHED
+abuja restarted (cannot reach lagos1)
+lagos2 (sync)  has: 452
+abuja  (async) has: 401
+-> lagos2 lost NOTHING (RPO = 0). abuja missed the transfers made while its link was down (RPO > 0).
+
+==================================================================================
+R10. FAILOVER to lagos2 (zero data loss), then re-point abuja at the new primary
+==================================================================================
+pg_promote -> true
+promotion took 137 ms
+new primary lagos2 accepts transfers
+abuja now follows lagos2
+lagos2 lab transfers: 453
+abuja  lab transfers: 453
+-> abuja caught up with everything, including the transfers it missed
+ledger check on new primary (unbalanced txns): 0
+wallets where balance <> ledger: 0
+
+==================================================================================
+Clean-up
+==================================================================================
+lab stopped

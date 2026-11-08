@@ -1,0 +1,56 @@
+
+================================================================================================
+S0. How many real TapNaira transfers would cross shards?
+================================================================================================
+  2 shards by hash(wallet_id): 49.8% of P2P transfers are CROSS-SHARD  (theory: 50.0%)
+  4 shards by hash(wallet_id): 74.9% of P2P transfers are CROSS-SHARD  (theory: 75.0%)
+  8 shards by hash(wallet_id): 87.4% of P2P transfers are CROSS-SHARD  (theory: 87.5%)
+  -> Any random customer can pay any other, so no wallet-based key keeps both sides of a transfer together.
+
+================================================================================================
+Setup: 1,000 wallets distributed across 2 shards by wallet_id % 2 (N10,000 each)
+================================================================================================
+  shard0: (500, Decimal('5000000.00'))
+  shard1: (500, Decimal('5000000.00'))
+  total money in the system: N10,000,000.00
+
+================================================================================================
+S1. Same-shard transfer: wallet 2 -> wallet 4 (both on shard0) is one local ACID transaction
+================================================================================================
+  committed. total = N10,000,000.00 (unchanged)
+
+================================================================================================
+S2. Cross-shard transfer WITHOUT coordination: wallet 2 (shard0) -> wallet 7 (shard1), receiver FROZEN
+================================================================================================
+  shard0: debit of N2,000 COMMITTED
+  shard1: credit matched 0 rows (receiver frozen) -> ROLLBACK
+  total = N9,998,000.00  -> N2,000 has VANISHED. Each shard was atomic on its own; the transfer as a whole was not.
+  (repaired by hand for the demo; total back to N10,000,000.00)
+
+================================================================================================
+S3. Cross-shard transfers WITH two-phase commit
+================================================================================================
+  --- S3a. wallet 2 (shard0) -> wallet 7 (shard1), N2,000, both active
+    phase 1: shard0 debit wallet 2 -> PREPARED (xfer-727c7226-a)
+    phase 1: shard1 credit wallet 7 -> PREPARED (xfer-727c7226-b)
+    phase 2: COMMIT PREPARED on both shards
+  balances: w2 = N7,000.00, w7 = N12,000.00; total = N10,000,000.00
+  --- S3b. same transfer but the receiver is FROZEN (the S2 situation)
+    phase 1: shard0 debit wallet 2 -> PREPARED (xfer-a06d6529-a)
+    phase 1 FAILED (receiver inactive) -> rolling back everything
+    phase 2: ROLLBACK PREPARED xfer-a06d6529-a on shard0
+  balances: w2 = N7,000.00, w7 = N12,000.00; total = N10,000,000.00 -> nothing vanished
+
+================================================================================================
+S4. Coordinator crash between PREPARE and COMMIT
+================================================================================================
+    phase 1: shard0 debit wallet 4 -> PREPARED (xfer-c76d864f-a)
+    phase 1: shard1 credit wallet 9 -> PREPARED (xfer-c76d864f-b)
+    !!! coordinator CRASHES after both PREPAREs, before COMMIT
+  shard0 pg_prepared_xacts: [('xfer-c76d864f-a',)]
+  shard1 pg_prepared_xacts: [('xfer-c76d864f-b',)]
+  another transfer from wallet 4 BLOCKS: the prepared (in-doubt) transaction still holds its row lock
+  recovery: the coordinator restarts, reads its decision log ('all prepared -> COMMIT') and finishes phase 2
+  shard0 pg_prepared_xacts after recovery: []
+  shard1 pg_prepared_xacts after recovery: []
+  total = N10,000,000.00 (unchanged: money conserved across shards)
