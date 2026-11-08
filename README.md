@@ -19,12 +19,23 @@ All portfolio activities use this case study and the same synthetic dataset (abo
 fintech-database-portfolio/
 ├── portfolio-1-database-design/          ERD, schema, seed data, constraint tests, normalisation
 ├── portfolio-2-query-optimisation/       queries, indexes, EXPLAIN ANALYZE before/after, experiments
-├── portfolio-3-transactions-concurrency/ (in progress)
-├── portfolio-4-nosql/                    (in progress)
-├── portfolio-5-distributed-cloud/        (in progress)
+├── portfolio-3-transactions-concurrency/ transfer procedure, COMMIT/ROLLBACK, concurrency demos
+├── portfolio-4-nosql/                    graph model (Cypher) for fraud-ring detection
+├── portfolio-5-distributed-cloud/        sync + async replication, failover, sharding with 2PC
+├── docs/                                 AI-use declaration, reflection, references
 └── README.md
 ```
 Each folder has a README explaining what was implemented, how to run it and what the evidence shows.
+
+## Summary of results
+
+| Portfolio | Highlights |
+|---|---|
+| 1. Design | 13 tables; a **double-entry ledger** with a deferred balance check; append-only history; idempotency keys; BVN stored only as a hash (NDPA) |
+| 2. Optimisation | Covering and partial indexes made the transfer-path checks (daily limit, fraud velocity) **about 2,000–6,000× faster**; a materialised view fixed the agent league table, but only after `ANALYZE` |
+| 3. Transactions | Naive double-spend created ₦8,010; the chosen **conditional UPDATE** prevented it; a 20-way stress test gave exactly 9 approvals and a balanced ledger; deadlock, read skew and idempotency demonstrated |
+| 4. NoSQL | **Graph model**: followed stolen money through 5 mules to a collector and an agent, found the fan-in collector, and found the time-ordered ring; compared honestly with SQL |
+| 5. Distributed | **Sync + async replication**: RPO = 0 on failover (452 of 452 transfers), async DR missed 51 then caught up; 50–87% of transfers would cross shards; two-phase commit demonstrated |
 
 ## How to reproduce
 PostgreSQL 16 and Python 3 (`pip install psycopg2-binary`).
