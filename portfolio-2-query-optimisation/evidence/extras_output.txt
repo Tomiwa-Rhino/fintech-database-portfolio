@@ -1,0 +1,133 @@
+SET
+SET
+Timing is on.
+=== E1. Sargability: wrapping posted_at in a function stops the index range scan (Q2 rewritten badly) ===
+--- E1a. NON-sargable: posted_at::date = ...
+                                                          QUERY PLAN                                                           
+-------------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual time=0.133..0.134 rows=1 loops=1)
+   ->  Index Only Scan using ix_ledger_wallet_time on ledger_entry (actual time=0.114..0.126 rows=2 loops=1)
+         Index Cond: (wallet_id = 17034)
+         Filter: ((direction = 'DR'::bpchar) AND (((posted_at AT TIME ZONE 'Africa/Lagos'::text))::date = '2025-09-11'::date))
+         Rows Removed by Filter: 11
+         Heap Fetches: 1
+ Planning Time: 0.418 ms
+ Execution Time: 0.173 ms
+(8 rows)
+
+Time: 1.337 ms
+--- E1b. Sargable half-open range (as in Q2)
+                                                                                      QUERY PLAN                                                                                      
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual time=0.012..0.012 rows=1 loops=1)
+   ->  Index Only Scan using ix_ledger_wallet_time on ledger_entry (actual time=0.007..0.008 rows=3 loops=1)
+         Index Cond: ((wallet_id = 17034) AND (posted_at >= '2025-09-11 00:00:00+00'::timestamp with time zone) AND (posted_at < '2025-09-12 00:00:00+00'::timestamp with time zone))
+         Filter: (direction = 'DR'::bpchar)
+         Heap Fetches: 0
+ Planning Time: 0.079 ms
+ Execution Time: 0.023 ms
+(7 rows)
+
+Time: 0.382 ms
+=== E2. Q8 (agent league table) aggregates ~10k cash-outs per quarter: pre-aggregate in a materialised view ===
+DROP MATERIALIZED VIEW
+Time: 6.105 ms
+SELECT 106377
+Time: 245.286 ms
+CREATE INDEX
+Time: 68.246 ms
+--- E2a. query the new view BEFORE it has statistics (no ANALYZE yet)
+                                                                         QUERY PLAN                                                                         
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit (actual time=215.513..215.523 rows=10 loops=1)
+   ->  WindowAgg (actual time=215.512..215.520 rows=10 loops=1)
+         ->  Sort (actual time=215.505..215.507 rows=10 loops=1)
+               Sort Key: (sum(m.value)) DESC
+               Sort Method: quicksort  Memory: 48kB
+               ->  GroupAggregate (actual time=214.500..215.361 rows=500 loops=1)
+                     Group Key: a.business_name
+                     ->  Sort (actual time=214.475..214.655 rows=3958 loops=1)
+                           Sort Key: a.business_name
+                           Sort Method: quicksort  Memory: 282kB
+                           ->  Nested Loop (actual time=4.752..212.901 rows=3958 loops=1)
+                                 Join Filter: (m.agent_id = a.agent_id)
+                                 Rows Removed by Join Filter: 1975042
+                                 ->  Seq Scan on agent a (actual time=0.009..0.154 rows=500 loops=1)
+                                 ->  Materialize (actual time=0.001..0.199 rows=3958 loops=500)
+                                       ->  Seq Scan on mv_agent_daily m (actual time=0.667..6.504 rows=3958 loops=1)
+                                             Filter: ((day >= '2026-07-01'::date) AND (day < '2026-10-01'::date) AND ((txn_type)::text = 'CASH_OUT'::text))
+                                             Rows Removed by Filter: 102419
+ Planning Time: 0.305 ms
+ Execution Time: 215.581 ms
+(20 rows)
+
+Time: 216.791 ms
+--- E2b. after ANALYZE mv_agent_daily (the planner now knows the row counts)
+ANALYZE
+Time: 62.213 ms
+                                                                   QUERY PLAN                                                                   
+------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit (actual time=8.328..8.337 rows=10 loops=1)
+   ->  WindowAgg (actual time=8.327..8.335 rows=10 loops=1)
+         ->  Sort (actual time=8.322..8.325 rows=10 loops=1)
+               Sort Key: (sum(m.value)) DESC
+               Sort Method: quicksort  Memory: 48kB
+               ->  HashAggregate (actual time=8.102..8.198 rows=500 loops=1)
+                     Group Key: a.business_name
+                     Batches: 1  Memory Usage: 297kB
+                     ->  Hash Join (actual time=0.729..7.195 rows=3958 loops=1)
+                           Hash Cond: (m.agent_id = a.agent_id)
+                           ->  Seq Scan on mv_agent_daily m (actual time=0.608..6.426 rows=3958 loops=1)
+                                 Filter: ((day >= '2026-07-01'::date) AND (day < '2026-10-01'::date) AND ((txn_type)::text = 'CASH_OUT'::text))
+                                 Rows Removed by Filter: 102419
+                           ->  Hash (actual time=0.115..0.116 rows=500 loops=1)
+                                 Buckets: 1024  Batches: 1  Memory Usage: 34kB
+                                 ->  Seq Scan on agent a (actual time=0.004..0.049 rows=500 loops=1)
+ Planning Time: 0.374 ms
+ Execution Time: 8.374 ms
+(18 rows)
+
+Time: 9.215 ms
+--- nightly refresh cost
+REFRESH MATERIALIZED VIEW
+Time: 1860.567 ms (00:01.861)
+=== E3. Cost of the ledger index on writes: post 20,000 ledger legs WITH vs WITHOUT ix_ledger_wallet_time ===
+ALTER TABLE
+Time: 0.564 ms
+--- E3a. with the index
+BEGIN
+Time: 0.079 ms
+INSERT 0 20000
+Time: 359.817 ms
+ROLLBACK
+Time: 1.990 ms
+--- E3b. index dropped inside the transaction (restored by ROLLBACK)
+BEGIN
+Time: 0.143 ms
+DROP INDEX
+Time: 0.437 ms
+INSERT 0 20000
+Time: 297.941 ms
+ROLLBACK
+Time: 0.281 ms
+ALTER TABLE
+Time: 5.698 ms
+=== E4. Reconciliation query (finance): stored balance must equal the ledger for every wallet (expect 0 rows) ===
+                                                                  QUERY PLAN                                                                  
+----------------------------------------------------------------------------------------------------------------------------------------------
+ Hash Join (actual time=401.962..401.965 rows=0 loops=1)
+   Hash Cond: (w.wallet_id = ledger_entry.wallet_id)
+   Join Filter: (w.balance <> (sum(CASE ledger_entry.direction WHEN 'CR'::bpchar THEN ledger_entry.amount ELSE (- ledger_entry.amount) END)))
+   Rows Removed by Join Filter: 30502
+   ->  Seq Scan on wallet w (actual time=0.270..2.419 rows=30502 loops=1)
+   ->  Hash (actual time=390.743..390.745 rows=30502 loops=1)
+         Buckets: 32768  Batches: 1  Memory Usage: 1656kB
+         ->  HashAggregate (actual time=316.445..385.799 rows=30502 loops=1)
+               Group Key: ledger_entry.wallet_id
+               Batches: 5  Memory Usage: 8497kB  Disk Usage: 13112kB
+               ->  Seq Scan on ledger_entry (actual time=0.007..60.756 rows=763772 loops=1)
+ Planning Time: 0.367 ms
+ Execution Time: 403.287 ms
+(13 rows)
+
+Time: 404.406 ms
