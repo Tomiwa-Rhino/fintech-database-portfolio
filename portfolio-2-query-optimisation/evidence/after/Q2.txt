@@ -1,0 +1,17 @@
+-- Q2 Daily-limit check before a transfer: total sent by this wallet today (runs on EVERY transfer)
+-- median of 5: 0.014 ms
+
+SELECT COALESCE(sum(le.amount), 0) AS sent_today
+FROM wallet.ledger_entry le
+WHERE le.wallet_id = 17034 AND le.direction = 'DR'
+  AND le.posted_at >= TIMESTAMPTZ '2025-09-11' AND le.posted_at < TIMESTAMPTZ '2025-09-12';
+
+Aggregate  (cost=8.45..8.46 rows=1 width=32) (actual time=0.006..0.006 rows=1 loops=1)
+  Buffers: shared hit=4
+  ->  Index Only Scan using ix_ledger_wallet_time on ledger_entry le  (cost=0.42..8.45 rows=1 width=5) (actual time=0.003..0.004 rows=3 loops=1)
+        Index Cond: ((wallet_id = 17034) AND (posted_at >= '2025-09-11 00:00:00+00'::timestamp with time zone) AND (posted_at < '2025-09-12 00:00:00+00'::timestamp with time zone))
+        Filter: (direction = 'DR'::bpchar)
+        Heap Fetches: 0
+        Buffers: shared hit=4
+Planning Time: 0.027 ms
+Execution Time: 0.012 ms

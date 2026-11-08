@@ -1,0 +1,39 @@
+-- Q1 Wallet statement for the last 30 days (customer looks at their app)
+-- median of 5: 0.046 ms
+
+SELECT le.posted_at, t.reference, t.txn_type, le.direction, le.amount, t.narration
+FROM wallet.customer c
+JOIN wallet.wallet w        ON w.customer_id = c.customer_id
+JOIN wallet.ledger_entry le ON le.wallet_id = w.wallet_id
+JOIN wallet.txn t           ON t.txn_id = le.txn_id
+WHERE c.phone = '+2348000018267'
+  AND le.posted_at >= TIMESTAMPTZ '2026-09-01' AND le.posted_at < TIMESTAMPTZ '2026-10-01'
+ORDER BY le.posted_at DESC;
+
+Sort  (cost=18.90..18.91 rows=1 width=51) (actual time=0.026..0.027 rows=5 loops=1)
+  Sort Key: le.posted_at DESC
+  Sort Method: quicksort  Memory: 25kB
+  Buffers: shared hit=30
+  ->  Nested Loop  (cost=1.42..18.89 rows=1 width=51) (actual time=0.013..0.023 rows=5 loops=1)
+        Buffers: shared hit=30
+        ->  Nested Loop  (cost=1.00..17.77 rows=1 width=24) (actual time=0.010..0.013 rows=5 loops=1)
+              Buffers: shared hit=10
+              ->  Nested Loop  (cost=0.57..16.62 rows=1 width=8) (actual time=0.006..0.007 rows=1 loops=1)
+                    Buffers: shared hit=6
+                    ->  Index Scan using customer_phone_key on customer c  (cost=0.29..8.30 rows=1 width=4) (actual time=0.003..0.004 rows=1 loops=1)
+                          Index Cond: ((phone)::text = '+2348000018267'::text)
+                          Buffers: shared hit=3
+                    ->  Index Scan using one_wallet_per_customer on wallet w  (cost=0.29..8.30 rows=1 width=12) (actual time=0.002..0.002 rows=1 loops=1)
+                          Index Cond: (customer_id = c.customer_id)
+                          Buffers: shared hit=3
+              ->  Index Only Scan using ix_ledger_wallet_time on ledger_entry le  (cost=0.42..1.13 rows=2 width=32) (actual time=0.003..0.004 rows=5 loops=1)
+                    Index Cond: ((wallet_id = w.wallet_id) AND (posted_at >= '2026-09-01 00:00:00+00'::timestamp with time zone) AND (posted_at < '2026-10-01 00:00:00+00'::timestamp with time zone))
+                    Heap Fetches: 0
+                    Buffers: shared hit=4
+        ->  Index Scan using txn_pkey on txn t  (cost=0.42..1.12 rows=1 width=43) (actual time=0.001..0.001 rows=1 loops=5)
+              Index Cond: (txn_id = le.txn_id)
+              Buffers: shared hit=20
+Planning:
+  Buffers: shared hit=37
+Planning Time: 0.264 ms
+Execution Time: 0.042 ms
